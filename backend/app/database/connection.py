@@ -86,8 +86,11 @@ async def _apply_timescale(conn) -> None:
 
 
 async def init_db() -> None:
-    from app.database import models  # noqa: F401
+    import logging
 
+    import app.database.models  # noqa: F401 — register metadata
+
+    log = logging.getLogger(__name__)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         try:
@@ -98,3 +101,4 @@ async def init_db() -> None:
             await _apply_timescale(conn)
         except Exception:  # noqa: BLE001
             pass
+    log.info("Database schema ready (%d tables)", len(Base.metadata.tables))
