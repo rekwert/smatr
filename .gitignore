@@ -5,14 +5,10 @@ __pycache__/
 .env
 .env.*
 !.env.example
-*.egg-info/
-.mypy_cache/
-node_modules/
-.next/
-dist/
-build/
-.DS_Store
+!.env.*.example
 docker/.env
+!docker/.env.example
+!docker/.env.vps.example
 secrets/
 *.pem
 *.key
