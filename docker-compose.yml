@@ -1,0 +1,99 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: smas
+      POSTGRES_PASSWORD: smas
+      POSTGRES_DB: smas
+    ports:
+      - "5433:5432"
+    volumes:
+      - smas_pg:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smas -d smas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Optional event bus for PRO / multi-service (MVP uses Redis pub/sub + Celery)
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: smas
+      RABBITMQ_DEFAULT_PASS: smas
+    profiles:
+      - full
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./docker/.env.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smas:smas@postgres:5432/smas
+      REDIS_URL: redis://redis:6379/0
+      BYBIT_BASE_URL: https://api.bybit.com
+      BYBIT_WS_URL: wss://stream.bybit.com/v5/public/linear
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./docker/.env.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smas:smas@postgres:5432/smas
+      REDIS_URL: redis://redis:6379/0
+      BYBIT_BASE_URL: https://api.bybit.com
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker -B -l info
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+    ports:
+      - "3001:3000"
+    depends_on:
+      - api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  smas_pg:

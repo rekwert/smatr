@@ -1,0 +1,11 @@
+Опиши текущий рыночный контекст по данным.
+
+Верни JSON:
+{
+  "summary": "...",
+  "strengths": ["..."],
+  "risks": ["..."],
+  "scenario": {"type": "CONTEXT", "conditions": ["вероятные сценарии"]},
+  "confidence": 0-100,
+  "explanation": "текст на русском"
+}
