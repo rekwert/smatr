@@ -1,0 +1,122 @@
+# Isolated SMAS stack for VPS — does NOT touch host postgres/redis (5432/6379).
+# Project name: smas  →  containers smas-postgres, smas-redis, smas-api, smas-worker, smas-web
+# Public ports only: API 8010, Web 3010. DB/Redis stay on internal docker network.
+
+name: smas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${SMAS_PG_USER:-smas}
+      POSTGRES_PASSWORD: ${SMAS_PG_PASSWORD:?set SMAS_PG_PASSWORD}
+      POSTGRES_DB: ${SMAS_PG_DB:-smas}
+    volumes:
+      - smas_pg_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    # No host port publish — isolated from existing :5432 postgres
+    networks:
+      - smas_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: 384m
+
+  redis:
+    image: redis:7-alpine
+    container_name: smas-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - smas_redis_data:/data
+    # No host port publish — isolated from existing :6379 redis
+    networks:
+      - smas_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 96m
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smas-api
+    restart: unless-stopped
+    env_file:
+      - ./docker/.env.vps
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${SMAS_PG_USER:-smas}:${SMAS_PG_PASSWORD}@postgres:5432/${SMAS_PG_DB:-smas}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: production
+    ports:
+      - "8010:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smas_net
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    mem_limit: 450m
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smas-worker
+    restart: unless-stopped
+    env_file:
+      - ./docker/.env.vps
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${SMAS_PG_USER:-smas}:${SMAS_PG_PASSWORD}@postgres:5432/${SMAS_PG_DB:-smas}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: production
+      SCAN_INTERVAL_SECONDS: "300"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smas_net
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-B", "-l", "info", "--concurrency", "1"]
+    mem_limit: 450m
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://108.174.78.39:8010}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://108.174.78.39:8010}
+    container_name: smas-web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://108.174.78.39:8010}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://108.174.78.39:8010}
+    ports:
+      - "3010:3000"
+    depends_on:
+      - api
+    networks:
+      - smas_net
+    mem_limit: 350m
+
+volumes:
+  smas_pg_data:
+    name: smas_pg_data
+  smas_redis_data:
+    name: smas_redis_data
+
+networks:
+  smas_net:
+    name: smas_net
+    driver: bridge
