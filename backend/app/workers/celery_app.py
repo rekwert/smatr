@@ -29,7 +29,22 @@ celery_app.conf.beat_schedule = {
 
 
 def _run_async(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Run coroutine in a fresh event loop; dispose async SQLAlchemy engine first.
+
+    Celery prefork workers reuse the process: a global AsyncEngine bound to a
+    previous loop causes "Future attached to a different loop".
+    """
+
+    async def _wrapped():
+        from app.database.connection import engine
+
+        await engine.dispose()
+        try:
+            return await coro
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_wrapped())
 
 
 @celery_app.task(name="app.workers.tasks.scan_market")
@@ -48,7 +63,7 @@ def scan_market(timeframe: str | None = None, limit: int | None = None):
             return [s.id for s in signals]
 
     try:
-        ids = asyncio.run(_inner())
+        ids = _run_async(_inner())
         logger.info("scan_market created signals: %s", ids)
         return {"created": len(ids), "ids": ids}
     except Exception as exc:  # noqa: BLE001
@@ -70,7 +85,7 @@ def universe_scan(do_heavy: bool = True):
         )
 
     try:
-        result = asyncio.run(_inner())
+        result = _run_async(_inner())
         logger.info(
             "universe_scan L1=%s L2=%s L3=%s ideas=%s",
             result["levels"]["l1_universe"],
@@ -104,7 +119,7 @@ def ingest_market_history(per_exchange: int = 12):
             )
 
     try:
-        result = asyncio.run(_inner())
+        result = _run_async(_inner())
         logger.info(
             "ingest_market_history candles=%s oi=%s symbols=%s errors=%s",
             result.get("candles_written"),
