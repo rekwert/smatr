@@ -75,6 +75,7 @@ class SignalOut(BaseModel):
     edge_stars: Optional[str] = None
     edge_reasons: list[str] = Field(default_factory=list)
     edge_hint: Optional[str] = None
+    feed: Optional[str] = None  # inefficiency | volume_scan
     replay: list[dict[str, Any]] = Field(default_factory=list)
     score_history: list[dict[str, Any]] = Field(default_factory=list)
     status_reason: Optional[str] = None

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-import socket
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import desc, select
@@ -11,8 +11,10 @@ from app.api.signal_serialize import to_signal_out
 from app.config.constants import DISCLAIMER
 from app.database.connection import SessionLocal
 from app.database.models import Signal
+from app.database.pg_health import pg_up
 from app.exchange_layer.connectors import DEFAULT_EXCHANGES
 from app.services import memory_store
+from app.services.inefficiency_feed import FEED_INEFFICIENCY, filter_and_sort
 from app.services.scanner import ScannerService
 from app.universe.engine import UniverseEngine
 
@@ -20,50 +22,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scanner", tags=["scanner"])
 
 
-def _pg_up() -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", 5433), timeout=0.4):
-            return True
-    except OSError:
-        return False
-
-
 @router.get("/top", response_model=ScannerTopOut)
 async def scanner_top(
-    min_score: int = Query(75, ge=0, le=100),
+    min_score: int = Query(0, ge=0, le=100),
     limit: int = Query(20, ge=1, le=100),
+    feed: str = Query(FEED_INEFFICIENCY, pattern="^(inefficiency|volume_scan|all)$"),
 ):
-    if _pg_up():
+    raw: list[dict[str, Any]] = []
+    if pg_up():
         try:
             async with SessionLocal() as db:
-                smc = (
+                rows = (
                     await db.execute(
                         select(Signal)
-                        .where(Signal.status == "active", Signal.signal_type == "smc", Signal.score >= min_score)
+                        .where(Signal.status == "active")
                         .order_by(desc(Signal.score))
-                        .limit(limit)
+                        .limit(max(limit * 8, 120))
                     )
                 ).scalars().all()
-                pump = (
-                    await db.execute(
-                        select(Signal)
-                        .where(Signal.status == "active", Signal.signal_type == "pump", Signal.score >= min_score)
-                        .order_by(desc(Signal.score))
-                        .limit(limit)
-                    )
-                ).scalars().all()
-                if smc or pump:
-                    return ScannerTopOut(
-                        smc_setups=[to_signal_out(s) for s in smc],
-                        pump_candidates=[to_signal_out(s) for s in pump],
-                        disclaimer=DISCLAIMER,
-                    )
+                raw = [to_signal_out(r).model_dump() for r in rows]
         except Exception as exc:  # noqa: BLE001
             logger.warning("scanner/top DB unavailable: %s", exc)
 
-    mem = memory_store.list_signals(min_score=min_score, limit=limit * 2)
-    smc = [s for s in mem if s.get("signal_type") == "smc"][:limit]
-    pump = [s for s in mem if s.get("signal_type") == "pump"][:limit]
+    if not raw:
+        raw = [
+            to_signal_out(s).model_dump()
+            for s in memory_store.list_signals(min_score=0, limit=max(limit * 8, 120))
+        ]
+
+    ranked = filter_and_sort(raw, feed=feed, min_score=min_score, limit=limit * 2)
+    smc = [s for s in ranked if s.get("signal_type") == "smc"][:limit]
+    pump = [s for s in ranked if s.get("signal_type") == "pump"][:limit]
+    # Default inefficiency feed: de-emphasize pump noise unless explicitly all/volume
+    if feed == FEED_INEFFICIENCY:
+        pump = []
     return ScannerTopOut(
         smc_setups=[to_signal_out(s) for s in smc],
         pump_candidates=[to_signal_out(s) for s in pump],
@@ -80,8 +72,8 @@ async def run_scanner(
 ):
     """
     Manual scan.
-    mode=all  → Market Universe: Bybit + OKX + Bitget + MEXC + BingX + KuCoin
-    mode=bybit → legacy Bybit-only top volume scan
+    mode=all  → Universe inefficiency feed (6 exchanges, structure gate)
+    mode=bybit → legacy Bybit top-volume (tagged volume_scan, not main feed)
     """
     if mode == "bybit":
         return await _run_bybit_only(timeframe=timeframe, limit=limit)
@@ -90,7 +82,6 @@ async def run_scanner(
     if not names:
         names = list(DEFAULT_EXCHANGES)
 
-    # Scale heavy/ideas from limit (UI "топ N")
     trade_ideas = max(5, min(30, limit))
     heavy_limit = max(trade_ideas, min(80, limit * 2))
     cheap_limit = max(80, min(250, heavy_limit * 4))
@@ -111,22 +102,27 @@ async def run_scanner(
             detail=f"Не удалось просканировать биржи: {exc}. Проверьте сеть/прокси.",
         ) from exc
 
-    mem = memory_store.list_signals(min_score=0, limit=trade_ideas * 2)
-    pg = _pg_up()
+    mem = memory_store.list_signals(min_score=0, limit=trade_ideas * 4)
+    ranked = filter_and_sort(mem, feed=FEED_INEFFICIENCY, min_score=0, limit=trade_ideas)
+    pg = pg_up()
     return {
         "created": len(result.get("trade_ideas") or []),
+        "feed_shown": len(ranked),
         "storage": "postgres+memory" if pg else "memory",
         "mode": "all",
+        "feed": FEED_INEFFICIENCY,
         "exchanges": names,
         "levels": result.get("levels"),
         "stats": result.get("stats"),
-        "signals": [to_signal_out(s).model_dump() for s in mem[:trade_ideas]],
+        "signals": [to_signal_out(s).model_dump() for s in ranked],
         "disclaimer": DISCLAIMER,
         "note": (
-            f"Скан по {len(names)} биржам: {', '.join(names)}. "
-            "PostgreSQL недоступен — результаты в памяти до перезапуска API."
-            if not pg
-            else f"Скан по {len(names)} биржам: {', '.join(names)}. Сигналы пишутся в Postgres + память."
+            f"Неэффективности · {len(names)} бирж. Гейт: Sweep+FVG+OB, сортировка Edge→Exec→Setup."
+            + (
+                " PostgreSQL недоступен — память процесса."
+                if not pg
+                else " Сигналы в Postgres + память."
+            )
         ),
     }
 
@@ -134,7 +130,7 @@ async def run_scanner(
 async def _run_bybit_only(*, timeframe: str, limit: int) -> dict:
     service = ScannerService()
 
-    if _pg_up():
+    if pg_up():
         try:
             async with SessionLocal() as db:
                 signals = await service.run_scan(db, timeframe=timeframe, limit=limit)
@@ -142,9 +138,11 @@ async def _run_bybit_only(*, timeframe: str, limit: int) -> dict:
                     "created": len(signals),
                     "storage": "postgres",
                     "mode": "bybit",
+                    "feed": "volume_scan",
                     "exchanges": ["bybit"],
                     "signals": [to_signal_out(s).model_dump() for s in signals],
                     "disclaimer": DISCLAIMER,
+                    "note": "Режим «Все сигналы» (Bybit top volume) — не основной inefficiency feed.",
                 }
         except Exception as exc:  # noqa: BLE001
             logger.warning("DB scan failed, using memory: %s", exc)
@@ -161,8 +159,9 @@ async def _run_bybit_only(*, timeframe: str, limit: int) -> dict:
         "created": len(rows),
         "storage": "memory",
         "mode": "bybit",
+        "feed": "volume_scan",
         "exchanges": ["bybit"],
         "signals": [to_signal_out(s).model_dump() for s in rows],
         "disclaimer": DISCLAIMER,
-        "note": "PostgreSQL недоступен — результаты в памяти процесса (до перезапуска API).",
+        "note": "Режим «Все сигналы» (Bybit). Основной фид — inefficiency через mode=all.",
     }

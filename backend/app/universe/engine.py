@@ -80,28 +80,39 @@ class UniverseEngine:
         )
 
         if persist_memory:
-            from app.services.history_ingest import persist_signal_row
             from app.database.connection import SessionLocal
-            import socket
+            from app.database.pg_health import pg_up
+            from app.services.history_ingest import persist_signal_row
+            from app.services.inefficiency_feed import (
+                FEED_INEFFICIENCY,
+                annotate_feed,
+                should_persist_inefficiency,
+            )
 
-            def _pg_up() -> bool:
-                try:
-                    with socket.create_connection(("127.0.0.1", 5433), timeout=0.4):
-                        return True
-                except OSError:
-                    return False
-
-            pg_ok = _pg_up()
+            pg_ok = pg_up()
 
             for h in ideas:
                 if h.score < 50:
                     continue
                 analysis = h.analysis or {}
+                ok, why = should_persist_inefficiency(analysis)
+                if not ok:
+                    logger.debug(
+                        "skip inefficiency persist %s/%s: %s",
+                        h.exchange,
+                        h.symbol,
+                        why,
+                    )
+                    continue
                 levels = analysis.get("levels") or {}
+                reasons_src = analysis.get("reasons") or {}
                 reasons_block = {
-                    **(analysis.get("reasons") or {}),
+                    **reasons_src,
                     "found": h.reasons,
                     "components": analysis.get("components"),
+                    "checklist": reasons_src.get("checklist")
+                    or analysis.get("checklist")
+                    or {},
                     "universe_v2": True,
                     "tier": h.tier,
                     "ai_score": h.ai_score,
@@ -120,7 +131,10 @@ class UniverseEngine:
                     "lifecycle_status": analysis.get("lifecycle_status"),
                     "waiting_for": analysis.get("waiting_for"),
                     "ai_conclusion": analysis.get("ai_conclusion"),
+                    "edge_score": analysis.get("edge_score"),
+                    "edge_reasons": analysis.get("edge_reasons"),
                     "tp1": levels.get("tp1") or analysis.get("tp1"),
+                    "feed": FEED_INEFFICIENCY,
                 }
                 signal_row = {
                     "symbol": h.symbol,
@@ -139,6 +153,7 @@ class UniverseEngine:
                     "zones": analysis.get("zones") or {},
                     "explanation": analysis.get("ai_conclusion") or analysis.get("explanation"),
                     "status": "active",
+                    "feed": FEED_INEFFICIENCY,
                     "setup_score": analysis.get("setup_score") or h.smc_score,
                     "execution_score": analysis.get("execution_score"),
                     "overall_score": analysis.get("overall_score"),
@@ -194,11 +209,14 @@ class UniverseEngine:
                     "pd_zone": analysis.get("pd_zone"),
                     "edge_score": analysis.get("edge_score"),
                     "edge_reasons": analysis.get("edge_reasons"),
+                    "edge_stars": analysis.get("edge_stars"),
+                    "edge_hint": analysis.get("edge_hint"),
                     "score_history": analysis.get("score_history") or [],
                     "replay": analysis.get("replay") or [],
                     "tp1": levels.get("tp1") or analysis.get("tp1"),
                     "reeval_sec": 60,
                 }
+                annotate_feed(signal_row, FEED_INEFFICIENCY)
                 memory_store.upsert_signal(signal_row)
 
                 if pg_ok:

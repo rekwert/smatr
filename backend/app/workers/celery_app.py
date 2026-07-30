@@ -12,11 +12,9 @@ logger = logging.getLogger(__name__)
 celery_app = Celery("smas", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.timezone = "UTC"
 celery_app.conf.imports = ("app.workers.celery_app",)
+# Primary product feed = universe_scan (inefficiencies).
+# scan_market (Bybit top-volume) is NOT on beat — only manual / «Все сигналы».
 celery_app.conf.beat_schedule = {
-    "scan-market": {
-        "task": "app.workers.tasks.scan_market",
-        "schedule": float(settings.scan_interval_seconds),
-    },
     "universe-engine-v2": {
         "task": "app.workers.tasks.universe_scan",
         "schedule": 300.0,  # every 5 minutes — L1+L2 (+ optional heavy)

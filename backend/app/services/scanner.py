@@ -168,6 +168,8 @@ class ScannerService:
         return analysis
 
     async def persist_analysis(self, db: AsyncSession, analysis: dict[str, Any]) -> Optional[Signal]:
+        from app.services.inefficiency_feed import FEED_VOLUME_SCAN, annotate_feed
+
         score = int(analysis.get("score") or 0)
         pump_score = int((analysis.get("pump") or {}).get("total") or 0)
         if score < settings.min_signal_score and pump_score < settings.min_signal_score:
@@ -178,6 +180,7 @@ class ScannerService:
         final_score = pump_score if use_pump else score
         signal_type = "pump" if use_pump else "smc"
         levels = analysis.get("levels") or {}
+        annotate_feed(analysis, FEED_VOLUME_SCAN)
 
         # Deactivate older active signals for same exchange+symbol+tf
         await db.execute(
@@ -208,6 +211,7 @@ class ScannerService:
             "edge_reasons": analysis.get("edge_reasons"),
             "score_history": analysis.get("score_history") or [],
             "replay": analysis.get("replay") or [],
+            "feed": FEED_VOLUME_SCAN,
             "progress": analysis.get("progress"),
             "next_steps": analysis.get("next_steps"),
             "ai_comment": analysis.get("ai_comment"),
@@ -355,6 +359,7 @@ class ScannerService:
             oi_change_pct=oi_change,
             funding=funding,
             htf_trend=htf_trend,
+            volume_24h=volume_24h or None,
         )
         analysis["exchange"] = "bybit"
         pump = self.pump.analyze(bars, oi_change_pct=oi_change, market_cap=market_cap)
@@ -371,6 +376,8 @@ class ScannerService:
         return analysis
 
     def _analysis_to_signal_dict(self, analysis: dict[str, Any]) -> Optional[dict[str, Any]]:
+        from app.services.inefficiency_feed import FEED_VOLUME_SCAN, annotate_feed
+
         score = int(analysis.get("score") or 0)
         pump_score = int((analysis.get("pump") or {}).get("total") or 0)
         if score < settings.min_signal_score and pump_score < settings.min_signal_score:
@@ -378,6 +385,7 @@ class ScannerService:
         use_pump = pump_score >= score and pump_score >= settings.min_signal_score
         final_score = pump_score if use_pump else score
         levels = analysis.get("levels") or {}
+        annotate_feed(analysis, FEED_VOLUME_SCAN)
         reason = {
             **(analysis.get("reasons") or {}),
             "components": analysis.get("components"),
@@ -431,6 +439,7 @@ class ScannerService:
             "scenario_risk_pct": analysis.get("scenario_risk_pct"),
             "action": analysis.get("action"),
             "tp1": levels.get("tp1"),
+            "feed": FEED_VOLUME_SCAN,
         }
         return {
             "symbol": analysis["symbol"],
@@ -449,6 +458,7 @@ class ScannerService:
             "zones": analysis.get("zones") or {},
             "explanation": analysis.get("ai_conclusion") or analysis.get("explanation"),
             "status": "active",
+            "feed": FEED_VOLUME_SCAN,
             "setup_score": analysis.get("setup_score"),
             "execution_score": analysis.get("execution_score"),
             "overall_score": analysis.get("overall_score"),

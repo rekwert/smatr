@@ -1,5 +1,7 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export type FeedMode = "inefficiency" | "volume_scan" | "all";
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -18,21 +20,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<{ status: string; disclaimer: string }>("/health"),
   marketStatus: () => request<import("@/types").MarketStatus>("/api/v1/market/status"),
-  signals: (minScore = 50) =>
-    request<import("@/types").Signal[]>(`/api/v1/signals?min_score=${minScore}&limit=50`),
+  signals: (minScore = 0, feed: FeedMode = "inefficiency") =>
+    request<import("@/types").Signal[]>(
+      `/api/v1/signals?min_score=${minScore}&limit=50&feed=${feed}`
+    ),
   signal: (id: number) => request<import("@/types").Signal>(`/api/v1/signals/${id}`),
-  scannerTop: (minScore = 75) =>
+  scannerTop: (minScore = 0, feed: FeedMode = "inefficiency") =>
     request<{
       smc_setups: import("@/types").Signal[];
       pump_candidates: import("@/types").Signal[];
       disclaimer: string;
-    }>(`/api/v1/scanner/top?min_score=${minScore}`),
+    }>(`/api/v1/scanner/top?min_score=${minScore}&feed=${feed}`),
   charts: (symbol: string, timeframe = "15") =>
     request<{ symbol: string; timeframe: string; candles: import("@/types").Candle[] }>(
       `/api/v1/charts/${symbol}?timeframe=${timeframe}&limit=200`
     ),
-  runScan: (limit = 15) =>
-    request<{ created: number }>(`/api/v1/scanner/run?limit=${limit}`, { method: "POST" }),
+  runScan: (limit = 15, mode: "all" | "bybit" = "all") =>
+    request<{ created: number; feed?: string; note?: string }>(
+      `/api/v1/scanner/run?limit=${limit}&mode=${mode}`,
+      { method: "POST" }
+    ),
   backtest: (body: Record<string, unknown>) =>
     request<Record<string, unknown>>("/api/v1/backtest/run", {
       method: "POST",

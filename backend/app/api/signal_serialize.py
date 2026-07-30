@@ -180,6 +180,11 @@ def to_signal_out(row: Any) -> SignalOut:
         data.setdefault("edge_reasons", reason.get("edge_reasons"))
         data.setdefault("timing", reason.get("timing"))
         data.setdefault("lifecycle_status", reason.get("lifecycle_status"))
+        data.setdefault("feed", reason.get("feed") or data.get("feed"))
+        if isinstance(reason.get("checklist"), dict):
+            data.setdefault("checklist", reason.get("checklist"))
+        if isinstance(reason.get("components"), dict) and not data.get("components"):
+            data["components"] = reason.get("components")
 
     readiness = {}
     # Always try backfill: real components OR synthetic for universe_v2/legacy

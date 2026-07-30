@@ -38,6 +38,7 @@ class ScoreCalculator:
         oi_change_pct: float = 0.0,
         funding: Optional[float] = None,
         htf_trend: str = "range",
+        volume_24h: Optional[float] = None,
     ) -> dict[str, Any]:
         if len(candles) < 30:
             return self._empty(symbol, timeframe, "Insufficient history")
@@ -113,6 +114,7 @@ class ScoreCalculator:
             tp2=levels.get("tp2"),
             stop=levels.get("stop"),
             risk_reward=levels.get("risk_reward"),
+            volume_24h=volume_24h,
         )
         # Public score = Setup Score (качество идеи), не смешанный legacy.
         score = int(readiness["setup_score"])

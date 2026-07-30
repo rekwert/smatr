@@ -81,6 +81,7 @@ async def heavy_analyze(
                     timeframe="15",
                     oi_change_pct=oi_chg,
                     funding=funding,
+                    volume_24h=float(row.volume_24h or 0) or None,
                 )
                 pump_a = pump.analyze(bars, oi_change_pct=oi_chg)
                 features = extract_features(

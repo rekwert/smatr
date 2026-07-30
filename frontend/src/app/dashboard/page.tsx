@@ -5,10 +5,28 @@ import { motion } from "framer-motion";
 import { api } from "@/services/api";
 import { SignalCard } from "@/components/cards/SignalCard";
 
+function rankOpportunity(
+  a: import("@/types").Signal,
+  b: import("@/types").Signal
+): number {
+  const ae = a.edge_score ?? 0;
+  const be = b.edge_score ?? 0;
+  if (be !== ae) return be - ae;
+  const ax = a.execution_score ?? 0;
+  const bx = b.execution_score ?? 0;
+  if (bx !== ax) return bx - ax;
+  return (b.setup_score ?? b.score) - (a.setup_score ?? a.score);
+}
+
 export default function DashboardPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["market-status"], queryFn: api.marketStatus, retry: 1, refetchInterval: 60_000 });
-  const top = useQuery({ queryKey: ["scanner-top"], queryFn: () => api.scannerTop(50), retry: 1, refetchInterval: 60_000 });
+  const top = useQuery({
+    queryKey: ["scanner-top", "inefficiency"],
+    queryFn: () => api.scannerTop(0, "inefficiency"),
+    retry: 1,
+    refetchInterval: 60_000,
+  });
   const run = useMutation({
     mutationFn: () => api.universeRun({ cheap_limit: 150, heavy_limit: 25, do_heavy: true }),
     onSuccess: () => {
@@ -17,17 +35,7 @@ export default function DashboardPage() {
     },
   });
 
-  const opportunities = [
-    ...(top.data?.smc_setups || []),
-    ...(top.data?.pump_candidates || []),
-  ]
-    .sort((a, b) => {
-      const as = a.setup_score ?? a.score;
-      const bs = b.setup_score ?? b.score;
-      if (bs !== as) return bs - as;
-      return (b.probability ?? b.score) - (a.probability ?? a.score);
-    })
-    .slice(0, 9);
+  const opportunities = [...(top.data?.smc_setups || [])].sort(rankOpportunity).slice(0, 9);
 
   const volRu: Record<string, string> = {
     high: "высокая",
@@ -53,8 +61,8 @@ export default function DashboardPage() {
             Лучшие возможности
           </motion.h1>
           <p className="mt-3 max-w-2xl text-mist">
-            AI Market Dashboard · Market Universe Engine v2 (6 бирж → фильтр → SMC/AI).
-          Не топ-50 Bybit: mid/low liquidity + new listings.
+            Неэффективности рынка · Sweep + FVG + Order Block · сортировка Edge → Execution → Setup.
+            Мажоры только при редком сильном Edge. Не общий SMC-сканер топ-объёма.
           </p>
         </div>
         <button
@@ -63,7 +71,7 @@ export default function DashboardPage() {
           disabled={run.isPending}
           className="rounded-md bg-accent px-4 py-2 text-ink font-medium disabled:opacity-50"
         >
-          {run.isPending ? "Universe v2…" : "Запустить Universe v2"}
+          {run.isPending ? "Поиск неэффективностей…" : "Обновить фид"}
         </button>
       </section>
 
@@ -85,7 +93,7 @@ export default function DashboardPage() {
                 status.data?.volatility ||
                 "—",
           ],
-          ["Активные сигналы", status.isLoading ? "…" : String(status.data?.active_signals ?? 0)],
+          ["В фиде", status.isLoading ? "…" : String(opportunities.length || top.data?.smc_setups?.length || 0)],
           ["Всплески объёма", status.isLoading ? "…" : String(status.data?.volume_spike_count ?? 0)],
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg border border-line bg-panel/50 px-4 py-3">
@@ -95,10 +103,10 @@ export default function DashboardPage() {
         ))}
       </section>
 
-      {(run.isError) && (
+      {run.isError && (
         <div className="rounded-lg border border-warn/40 bg-warn/10 p-4 text-sm space-y-2">
           <p className="font-medium">Сканер не запустился</p>
-          <p className="text-mist">Проверьте, что API на порту 8000 запущен.</p>
+          <p className="text-mist">Проверьте, что API доступен.</p>
         </div>
       )}
       {run.isSuccess && (
@@ -111,7 +119,7 @@ export default function DashboardPage() {
       )}
 
       <section>
-        <h2 className="font-display text-2xl mb-4">Горячие сценарии</h2>
+        <h2 className="font-display text-2xl mb-4">Сильный Edge</h2>
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {opportunities.map((s) => (
             <SignalCard
@@ -124,7 +132,8 @@ export default function DashboardPage() {
           ))}
           {!top.isLoading && opportunities.length === 0 && !top.isError && (
             <p className="text-mist col-span-full">
-              Пока нет сигналов. Нажмите «Запустить Universe v2» — сканирует 6 бирж.
+              Пока нет сетапов с подтверждённой структурой (Sweep+FVG+OB) и достаточным Edge.
+              Нажмите «Обновить фид» или откройте сканер → «Все сигналы».
             </p>
           )}
         </div>

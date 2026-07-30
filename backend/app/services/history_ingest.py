@@ -103,9 +103,12 @@ async def persist_signal_row(db: AsyncSession, row: dict[str, Any]) -> Optional[
         "universe_v2",
         "ai_conclusion",
         "waiting_for",
+        "feed",
+        "checklist",
     ):
         if row.get(key) is not None:
             reason[key] = row.get(key)
+    reason.setdefault("feed", row.get("feed") or "inefficiency")
 
     signal = Signal(
         symbol=symbol,

@@ -1,10 +1,13 @@
 import { create } from "zustand";
 
+export type FeedMode = "inefficiency" | "all" | "volume_scan";
+
 type Filters = {
   minScore: number;
   smc: boolean;
   pump: boolean;
   timeframe: string;
+  feed: FeedMode;
 };
 
 type TradingMode = "scanner" | "assisted" | "auto";
@@ -18,10 +21,11 @@ type Store = {
 
 export const useSettingsStore = create<Store>((set) => ({
   filters: {
-    minScore: 75,
+    minScore: 0,
     smc: true,
-    pump: true,
+    pump: false,
     timeframe: "15",
+    feed: "inefficiency",
   },
   tradingMode: "assisted",
   setFilters: (partial) =>
