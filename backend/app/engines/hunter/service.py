@@ -36,13 +36,16 @@ class PumpHunterService:
         notify: bool = False,
         persist: bool = True,
     ) -> list[dict[str, Any]]:
-        universe = await self.scanner.scan_universe(min_volume=min_volume)
-        # Prefer low/mid liquidity band
-        candidates = [
+        universe = await self.scanner.scan_universe(min_volume=min(min_volume, 100_000))
+        # Prefer low/mid liquidity band (inefficiency hunting — not top turnover)
+        band = [
             u
             for u in universe
             if min_volume <= float(u.get("volume24h") or 0) <= max_volume
-        ][:limit_universe]
+        ]
+        # Prefer thinner names first (closer to min_volume), then higher relative activity
+        band.sort(key=lambda u: float(u.get("volume24h") or 0))
+        candidates = band[:limit_universe]
 
         results: list[dict[str, Any]] = []
 

@@ -1,23 +1,22 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
+import { useEffect } from "react";
 import { api } from "@/services/api";
 
 export default function HunterPage() {
-  const q = useQuery({
-    queryKey: ["pump-hunter"],
-    queryFn: () => api.pumpHunter(12),
-    retry: 0,
-    enabled: false,
-  });
   const run = useMutation({
-    mutationFn: () => api.pumpHunter(12),
+    mutationFn: () => api.pumpHunter(20),
   });
 
-  const rows = (run.data?.candidates || q.data?.candidates || []) as Array<
-    Record<string, unknown>
-  >;
+  // Auto-scan on open — Hunter previously looked "broken" because it never ran
+  useEffect(() => {
+    run.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const rows = (run.data?.candidates || []) as Array<Record<string, unknown>>;
 
   return (
     <div className="space-y-6">
@@ -25,8 +24,8 @@ export default function HunterPage() {
         <div>
           <h1 className="font-display text-4xl">Low Cap Hunter</h1>
           <p className="text-mist mt-2 max-w-2xl">
-            Ищем состояние <em>до</em> расширения: накопление → сжатие → объём → структура. Не
-            догоняем уже выросшие +50%.
+            Ищем mid/low liquidity <em>до</em> расширения: накопление → сжатие → объём → структура.
+            Диапазон оборота ~0.5–25M USDT · порог score ≥50.
           </p>
         </div>
         <button
@@ -38,8 +37,13 @@ export default function HunterPage() {
         </button>
       </div>
 
-      {(run.data?.disclaimer || q.data?.disclaimer) && (
-        <p className="text-xs text-mist">{String(run.data?.disclaimer || q.data?.disclaimer)}</p>
+      {run.data?.disclaimer && (
+        <p className="text-xs text-mist">{String(run.data.disclaimer)}</p>
+      )}
+      {run.isError && (
+        <div className="rounded-lg border border-warn/40 bg-warn/10 p-4 text-sm">
+          Скан не удался. Проверьте API и сеть, затем нажмите «Запустить Hunter» ещё раз.
+        </div>
       )}
 
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -80,13 +84,18 @@ export default function HunterPage() {
             {!!((r.red_flags as string[]) || []).length && (
               <p className="mt-2 text-xs text-warn">{(r.red_flags as string[]).join(" · ")}</p>
             )}
-            <p className="mt-3 text-xs text-mist">Quality {String(r.quality)}</p>
+            <p className="text-xs text-mist mt-3">Quality {String(r.quality)}</p>
           </div>
         ))}
       </div>
 
-      {!rows.length && !run.isPending && (
-        <p className="text-mist">Нажмите «Запустить Hunter» — сканирование бирж (может занять ~30 с).</p>
+      {run.isPending && (
+        <p className="text-mist">Сканируем mid/low liquidity на 6 биржах (~30–90 с)…</p>
+      )}
+      {!rows.length && !run.isPending && !run.isError && (
+        <p className="text-mist">
+          Кандидатов нет в текущем окне рынка. Нажмите «Запустить Hunter» ещё раз позже.
+        </p>
       )}
     </div>
   );

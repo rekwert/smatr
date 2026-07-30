@@ -80,9 +80,14 @@ export const api = {
     request<{ count: number; listings: Array<Record<string, unknown>> }>(
       "/api/v1/exchanges/new-listings"
     ),
-  pumpHunter: (analyzeTop = 12) =>
-    request<{ count: number; candidates: Array<Record<string, unknown>>; disclaimer: string }>(
-      `/api/v1/pump-hunter?analyze_top=${analyzeTop}&min_score=70`
+  pumpHunter: (analyzeTop = 20) =>
+    request<{
+      count: number;
+      candidates: Array<Record<string, unknown>>;
+      disclaimer: string;
+      params?: Record<string, unknown>;
+    }>(
+      `/api/v1/pump-hunter?analyze_top=${analyzeTop}&min_score=50&min_volume=500000&max_volume=25000000`
     ),
   createTradePlan: (body: Record<string, unknown>) =>
     request<Record<string, unknown>>("/api/v1/trade-plan/create", {

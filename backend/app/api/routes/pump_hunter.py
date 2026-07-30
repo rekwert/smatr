@@ -12,11 +12,11 @@ router = APIRouter(prefix="/pump-hunter", tags=["pump-hunter"])
 
 @router.get("")
 async def pump_hunter(
-    min_volume: float = Query(5_000_000, ge=0),
-    max_volume: float = Query(150_000_000, ge=0),
-    analyze_top: int = Query(15, ge=1, le=40),
-    min_score: int = Query(70, ge=0, le=100),
-    exchanges: str = Query("bybit,okx,bitget,mexc"),
+    min_volume: float = Query(500_000, ge=0, description="Min 24h turnover USDT"),
+    max_volume: float = Query(25_000_000, ge=0, description="Max 24h — keep mid/low liquidity"),
+    analyze_top: int = Query(20, ge=1, le=60),
+    min_score: int = Query(50, ge=0, le=100),
+    exchanges: str = Query("bybit,okx,bitget,mexc,bingx,kucoin"),
     notify: bool = False,
 ):
     names = [x.strip() for x in exchanges.split(",") if x.strip()]
@@ -27,10 +27,18 @@ async def pump_hunter(
         analyze_top=analyze_top,
         min_score=min_score,
         notify=notify,
+        limit_universe=100,
     )
     return {
         "count": len(rows),
         "candidates": rows,
+        "params": {
+            "min_volume": min_volume,
+            "max_volume": max_volume,
+            "min_score": min_score,
+            "analyze_top": analyze_top,
+            "exchanges": names,
+        },
         "disclaimer": "Early-stage analytical candidates. High risk. Not trade recommendations.",
     }
 
