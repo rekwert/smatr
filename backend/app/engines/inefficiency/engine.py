@@ -500,6 +500,29 @@ def _playbook(
     return steps
 
 
+def synthesize_playbook(
+    *,
+    near_entry: bool,
+    rv: float,
+    flow_ok: bool,
+    plan: Optional[dict[str, Any]] = None,
+    status: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Playbook without candles — for API serialize of stored signals."""
+    plan = plan or {}
+    volume_ok = rv >= MIN_RV_ENTRY
+    return _playbook(
+        status=status or (INEFF_WAIT_VOLUME if near_entry else INEFF_DETECTED),
+        kind="sweep_reclaim",
+        direction="LONG",
+        near_entry=near_entry,
+        volume_ok=volume_ok,
+        flow_ok=flow_ok,
+        rv=rv,
+        plan=plan,
+    )
+
+
 def _action(status: str, playbook: list[dict[str, Any]], plan: dict[str, Any]) -> dict[str, Any]:
     pending = [s["label"] for s in playbook if s.get("required") and not s.get("done")]
     if status == INEFF_ENTRY_READY:

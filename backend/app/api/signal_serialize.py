@@ -352,6 +352,27 @@ def to_signal_out(row: Any) -> SignalOut:
                 data[k] = readiness[k]
             elif isinstance(reason, dict) and reason.get(k) is not None:
                 data.setdefault(k, reason.get(k))
+        # Rebuild playbook for stored rows that predate the engine
+        if not data.get("inefficiency_playbook"):
+            from app.engines.inefficiency.engine import synthesize_playbook
+
+            rv = float(data.get("relative_volume") or 0)
+            data["inefficiency_playbook"] = synthesize_playbook(
+                near_entry=bool(data.get("near_entry") or data.get("timing") == "Optimal"),
+                rv=rv,
+                flow_ok=float((reason.get("components") or {}).get("orderflow") or 0) >= 50
+                or float((reason.get("components") or {}).get("oi") or 0) >= 50
+                or rv >= 2.0,
+                plan={
+                    "entry_low": data.get("ideal_entry_low"),
+                    "entry_high": data.get("ideal_entry_high"),
+                    "stop": data.get("stop"),
+                    "tp1": data.get("tp1"),
+                    "risk_reward": data.get("risk_reward"),
+                },
+                status=data.get("inefficiency_status"),
+            )
+
     else:
         status = _pick(reason, data, "lifecycle_status")
         meta = STATUS_META.get(str(status or ""), {})

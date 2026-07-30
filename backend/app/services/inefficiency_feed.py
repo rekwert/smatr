@@ -99,6 +99,11 @@ def feed_of(row: dict[str, Any]) -> str:
 def inefficiency_event_ok(row: dict[str, Any]) -> bool:
     """Accept flash OR classic Sweep+FVG+OB with real displacement."""
     reason = row.get("reason") if isinstance(row.get("reason"), dict) else {}
+    status = str(row.get("inefficiency_status") or reason.get("inefficiency_status") or "")
+    if status in ("INEFF_INVALIDATED", "INEFF_EXPIRED", "INEFF_NONE"):
+        return False
+    if row.get("inefficiency_qualifies") is False:
+        return False
     if row.get("inefficiency_qualifies") is True or reason.get("inefficiency_qualifies") is True:
         return True
     kind = row.get("inefficiency_type") or reason.get("inefficiency_type")
