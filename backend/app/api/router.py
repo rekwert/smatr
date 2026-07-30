@@ -8,6 +8,7 @@ from app.api.routes import (
     data,
     entry,
     exchanges,
+    journal,
     market,
     ml,
     notifications,
@@ -34,3 +35,4 @@ api_router.include_router(trade_plan.router)
 api_router.include_router(ml.router)
 api_router.include_router(universe.router)
 api_router.include_router(entry.router)
+api_router.include_router(journal.router)

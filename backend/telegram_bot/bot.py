@@ -79,13 +79,17 @@ def create_dispatcher() -> Dispatcher:
 
     @dp.message(Command("signals"))
     async def signals(message: Message):
-        data = await api_get("/api/v1/signals?min_score=80&limit=10")
+        data = await api_get("/api/v1/signals?min_score=0&limit=10&feed=inefficiency")
         if not data:
-            await message.answer("Активных сигналов нет.")
+            await message.answer("Активных неэффективностей нет.")
             return
-        lines = ["🔥 АКТИВНЫЕ СИГНАЛЫ\n"]
+        lines = ["🔥 НЕЭФФЕКТИВНОСТИ\n"]
         for i, s in enumerate(data[:10], 1):
-            lines.append(f"{i}. {s['symbol']}  Score {s['score']}  {s['direction']}")
+            edge = s.get("edge_score") or s.get("score")
+            st = s.get("inefficiency_status_ru") or s.get("lifecycle_ru") or ""
+            lines.append(
+                f"{i}. {s['symbol']}  Edge {edge}  {s['direction']}  {st}"
+            )
         first = data[0]
         await message.answer(
             "\n".join(lines),

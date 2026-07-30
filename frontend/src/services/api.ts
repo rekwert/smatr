@@ -127,4 +127,32 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ symbol, exchange, mode, timeframe: "15m" }),
     }),
+  journalList: (limit = 50) =>
+    request<
+      Array<{
+        id: number;
+        symbol: string;
+        side: string;
+        entry_price?: number | null;
+        exit_price?: number | null;
+        pnl?: number | null;
+        result?: string | null;
+        meta?: Record<string, unknown>;
+      }>
+    >(`/api/v1/journal?limit=${limit}&setup=inefficiency`),
+  journalStats: () =>
+    request<{
+      closed: number;
+      wins: number;
+      losses: number;
+      winrate: number | null;
+      avg_r: number | null;
+      usable_for_edge: boolean;
+      by_type?: Record<string, unknown>;
+    }>("/api/v1/journal/stats?setup=inefficiency"),
+  journalCreate: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/v1/journal", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

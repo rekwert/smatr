@@ -1604,6 +1604,7 @@ def build_readiness_payload(
     risk_reward: Optional[float] = None,
     volume_24h: Optional[float] = None,
     previous: Optional[dict[str, Any]] = None,
+    similar_winrate: Optional[float] = None,
 ) -> dict[str, Any]:
     # Phase first (feeds Setup weights)
     phase = infer_market_phase(direction, components, pd=pd, regime=regime)
@@ -1794,6 +1795,7 @@ def build_readiness_payload(
         setup_score=setup_score,
         timing=timing,
         profile=ineff_profile,
+        similar_winrate=similar_winrate,
     )
     probs = compute_probabilities(
         setup_score=setup_score,

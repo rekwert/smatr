@@ -39,6 +39,8 @@ class ScoreCalculator:
         funding: Optional[float] = None,
         htf_trend: str = "range",
         volume_24h: Optional[float] = None,
+        similar_winrate: Optional[float] = None,
+        orderflow_override: Optional[float] = None,
     ) -> dict[str, Any]:
         if len(candles) < 30:
             return self._empty(symbol, timeframe, "Insufficient history")
@@ -73,6 +75,9 @@ class ScoreCalculator:
             pd=pd,
             candles=candles,
         )
+        if orderflow_override is not None:
+            components["orderflow"] = float(orderflow_override)
+            components["orderflow_source"] = 1.0  # mark real tape delta
 
         legacy_score = self._weighted_total(components)
         sequence_valid = self._sequence_valid(components, direction)
@@ -115,6 +120,7 @@ class ScoreCalculator:
             stop=levels.get("stop"),
             risk_reward=levels.get("risk_reward"),
             volume_24h=volume_24h,
+            similar_winrate=similar_winrate,
         )
         # Prefer Ideal Entry plan (Stop/TP already normalized in readiness)
         if readiness.get("ideal_entry") is not None:

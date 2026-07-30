@@ -230,6 +230,7 @@ class UniverseEngine:
                     "inefficiency_status_ru": analysis.get("inefficiency_status_ru"),
                     "inefficiency_qualifies": bool(analysis.get("inefficiency_qualifies")),
                     "inefficiency_playbook": analysis.get("inefficiency_playbook") or [],
+                    "inefficiency_plan": analysis.get("inefficiency_plan") or {},
                     "relative_volume": analysis.get("relative_volume"),
                     "displacement_pct": analysis.get("displacement_pct"),
                     "entry_blockers": analysis.get("entry_blockers") or [],
@@ -240,6 +241,13 @@ class UniverseEngine:
                 }
                 annotate_feed(signal_row, FEED_INEFFICIENCY)
                 memory_store.upsert_signal(signal_row)
+
+                try:
+                    from app.notifications.inefficiency_alerts import maybe_alert_entry_ready
+
+                    await maybe_alert_entry_ready(signal_row)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("entry-ready alert skip: %s", exc)
 
                 if pg_ok:
                     try:

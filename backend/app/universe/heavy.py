@@ -32,6 +32,16 @@ async def heavy_analyze(
     selected = candidates[:limit]
     results: list[HeavyCandidate] = []
 
+    similar_winrate = None
+    try:
+        from app.services.journal import journal_stats
+
+        stats = await journal_stats(setup="inefficiency")
+        if stats.get("usable_for_edge") and stats.get("winrate") is not None:
+            similar_winrate = float(stats["winrate"])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("journal stats skip: %s", exc)
+
     async def _one(row: UniverseRow) -> Optional[HeavyCandidate]:
         async with sem:
             try:
@@ -68,10 +78,24 @@ async def heavy_analyze(
                     logger.debug("history write skip %s/%s: %s", row.exchange, row.symbol, exc)
                 oi_chg = 0.0
                 funding = row.funding_rate
+                orderflow_override = None
                 try:
                     oi = await mde.get_adapter(row.exchange).get_open_interest(row.symbol)
                     if oi:
                         oi_chg = float(oi.get("oi_change_pct") or 0)
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    from app.engines.inefficiency.orderflow import delta_from_trades
+
+                    trades = await mde.get_adapter(row.exchange).get_recent_trades(
+                        row.symbol, limit=80
+                    )
+                    # Direction unknown yet — score both; analyzer will prefer after infer
+                    # Use neutral LONG first; recalculated after analyze if needed
+                    delta = delta_from_trades(trades, direction="LONG")
+                    if delta.get("sample", 0) >= 20:
+                        orderflow_override = float(delta["score"])
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -82,7 +106,30 @@ async def heavy_analyze(
                     oi_change_pct=oi_chg,
                     funding=funding,
                     volume_24h=float(row.volume_24h or 0) or None,
+                    similar_winrate=similar_winrate,
+                    orderflow_override=orderflow_override,
                 )
+                # Re-align tape delta to final direction if we have trades
+                if orderflow_override is not None:
+                    try:
+                        from app.engines.inefficiency.orderflow import delta_from_trades
+
+                        trades = await mde.get_adapter(row.exchange).get_recent_trades(
+                            row.symbol, limit=80
+                        )
+                        d2 = delta_from_trades(
+                            trades, direction=str(analysis.get("direction") or "LONG")
+                        )
+                        if d2.get("sample", 0) >= 20:
+                            comps = analysis.get("components") or {}
+                            comps["orderflow"] = float(d2["score"])
+                            comps["tape_imbalance"] = float(d2.get("imbalance") or 0)
+                            analysis["components"] = comps
+                            analysis["relative_volume"] = analysis.get("relative_volume")
+                            analysis["orderflow_tape"] = d2
+                    except Exception:  # noqa: BLE001
+                        pass
+
                 pump_a = pump.analyze(bars, oi_change_pct=oi_chg)
                 features = extract_features(
                     row.symbol,
