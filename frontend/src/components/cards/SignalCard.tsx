@@ -278,6 +278,27 @@ export function SignalCard({
           {signal.edge_stars && (
             <div className="text-amber-300/90 tracking-widest text-sm">{signal.edge_stars}</div>
           )}
+          {(signal.inefficiency_type_ru || signal.inefficiency_thesis) && (
+            <div className="rounded-md border border-line/50 bg-ink/30 px-2 py-1.5 space-y-0.5">
+              <div className="text-[11px] text-slate-100 font-medium">
+                {signal.inefficiency_type_ru || "Неэффективность"}
+                {signal.inefficiency_strength != null ? (
+                  <span className="text-mist font-normal"> · сила {signal.inefficiency_strength}</span>
+                ) : null}
+              </div>
+              {signal.inefficiency_thesis && (
+                <p className="text-[10px] text-mist leading-snug">{signal.inefficiency_thesis}</p>
+              )}
+              <div className="flex flex-wrap gap-2 text-[10px] text-mist pt-0.5">
+                {signal.relative_volume != null && (
+                  <span>RV×{Number(signal.relative_volume).toFixed(2)}</span>
+                )}
+                {signal.displacement_pct != null && Number(signal.displacement_pct) > 0 && (
+                  <span>смещение {Number(signal.displacement_pct).toFixed(1)}%</span>
+                )}
+              </div>
+            </div>
+          )}
           <ul className="space-y-0.5">
             {(signal.edge_reasons || []).slice(0, 7).map((r) => (
               <li key={r} className="text-xs text-emerald-300/90">
@@ -286,6 +307,15 @@ export function SignalCard({
             ))}
           </ul>
           {signal.edge_hint && <p className="text-[10px] text-mist">{signal.edge_hint}</p>}
+          {(signal.entry_blockers || []).length > 0 && (
+            <ul className="space-y-0.5 border-t border-line/40 pt-1.5">
+              {(signal.entry_blockers || []).slice(0, 3).map((b) => (
+                <li key={b} className="text-[10px] text-amber-200/90">
+                  ⏳ {b}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

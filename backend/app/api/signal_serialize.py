@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.api.schemas import SignalOut
+from app.engines.inefficiency.profile import filter_confirmed_items
 from app.engines.scoring.readiness import STATUS_META, build_readiness_payload
 
 
@@ -185,6 +186,17 @@ def to_signal_out(row: Any) -> SignalOut:
             data.setdefault("checklist", reason.get("checklist"))
         if isinstance(reason.get("components"), dict) and not data.get("components"):
             data["components"] = reason.get("components")
+        for k in (
+            "inefficiency_type",
+            "inefficiency_type_ru",
+            "inefficiency_strength",
+            "inefficiency_thesis",
+            "relative_volume",
+            "displacement_pct",
+            "entry_blockers",
+        ):
+            if reason.get(k) is not None:
+                data.setdefault(k, reason.get(k))
 
     readiness = {}
     # Always try backfill: real components OR synthetic for universe_v2/legacy
@@ -301,14 +313,16 @@ def to_signal_out(row: Any) -> SignalOut:
             data["risk_reward"] = readiness["risk_reward"]
 
         reason = dict(reason)
-        orig_found = list(reason.get("found") or [])
+        orig_found = filter_confirmed_items(list(reason.get("found") or []))
         ready_confirmed = list(readiness.get("confirmed") or [])
-        # Keep universe hunter reasons visible; append SMC confirms
+        # SMC/structure confirms first; hunter liquidity tags are filtered as noise
         merged: list[str] = []
-        for item in (ready_confirmed + orig_found) if not reason.get("universe_v2") else (orig_found + ready_confirmed):
+        for item in ready_confirmed + orig_found:
             if item and item not in merged:
                 merged.append(item)
-        reason["confirmed"] = merged or ready_confirmed or orig_found
+        reason["confirmed"] = filter_confirmed_items(
+            merged or ready_confirmed or orig_found
+        )
         reason["missing_items"] = readiness.get("missing_items") or []
         reason["found"] = reason["confirmed"]
         reason["missing"] = reason["missing_items"]
@@ -316,6 +330,20 @@ def to_signal_out(row: Any) -> SignalOut:
         if readiness.get("execution_components") is None and not reason.get("components"):
             pass
         data["reason"] = reason
+        data["confirmed"] = reason["confirmed"]
+        for k in (
+            "inefficiency_type",
+            "inefficiency_type_ru",
+            "inefficiency_strength",
+            "inefficiency_thesis",
+            "relative_volume",
+            "displacement_pct",
+            "entry_blockers",
+        ):
+            if readiness.get(k) is not None:
+                data[k] = readiness[k]
+            elif isinstance(reason, dict) and reason.get(k) is not None:
+                data.setdefault(k, reason.get(k))
     else:
         status = _pick(reason, data, "lifecycle_status")
         meta = STATUS_META.get(str(status or ""), {})

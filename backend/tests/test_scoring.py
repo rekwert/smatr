@@ -128,12 +128,15 @@ def test_setup_not_crushed_without_bos():
     )
     assert payload["setup_score"] >= 65
     assert payload["timing"] == "Optimal"
-    assert "рано" not in (payload["ai_conclusion"] or "").lower()
-    assert "хорошей зоне" in (payload["ai_conclusion"] or "").lower()
+    conclusion = (payload["ai_conclusion"] or "").lower()
+    assert "неэффективность" in conclusion or "execution" in conclusion
+    assert "late" not in conclusion
     nt = payload["next_trigger"]
     assert nt and nt["title"] == "Следующее подтверждение"
     assert not any("вернётся" in c.lower() for c in nt["if_conditions"])
     assert payload["edge_score"] >= 55
+    assert payload.get("relative_volume") is not None
+    assert payload.get("inefficiency_thesis")
     # Confirmed order: Sweep before BOS
     confirmed = payload["confirmed"]
     if "Liquidity Sweep" in confirmed and "BOS" in " ".join(confirmed):

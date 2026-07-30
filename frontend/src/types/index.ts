@@ -148,6 +148,13 @@ export type Signal = {
   edge_stars?: string | null;
   edge_reasons?: string[];
   edge_hint?: string | null;
+  inefficiency_type?: string | null;
+  inefficiency_type_ru?: string | null;
+  inefficiency_strength?: number | null;
+  inefficiency_thesis?: string | null;
+  relative_volume?: number | null;
+  displacement_pct?: number | null;
+  entry_blockers?: string[];
   replay?: { time: string; status: string; label?: string; emoji?: string }[];
   score_history?: ScoreChange[];
   risk_label?: string | null;

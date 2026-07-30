@@ -82,7 +82,7 @@ export const CARD_HELP = {
   tradePlan:
     "План строится от Ideal Entry, не от текущей цены. SHORT: Stop выше Entry, TP ниже. LONG: Stop ниже Entry, TP выше.",
   edge:
-    "Edge Score — эвристика «почему идея интереснее других»: ликвидность, OI, Sweep, зона, RR. «Оценка по сетапу» — не журнальный WinRate.",
+    "Edge — редкость неэффективности: тонкость рынка × сила Sweep/FVG/OB × смещение × RV на событии. Не равен «можно входить» (это Execution).",
   replay:
     "Replay — история смены статусов сценария (WATCH → ENTRY READY → TP1 / INVALIDATED). Помогает понять, где логика работает.",
   sweep:

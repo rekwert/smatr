@@ -462,6 +462,8 @@ def build_waiting_for(
     direction: str,
     near_ideal: bool = False,
     timing: str = "Optimal",
+    relative_volume: Optional[float] = None,
+    components: Optional[dict[str, float]] = None,
 ) -> list[dict[str, Any]]:
     flow = (
         "Order Flow Buy Confirmation"
@@ -473,15 +475,22 @@ def build_waiting_for(
         if direction == "SHORT"
         else "Цена в Ideal Entry (Discount / OB)"
     )
+    rv = float(relative_volume or 0)
+    if rv <= 0 and components:
+        from app.engines.inefficiency.profile import estimate_rv_from_volume_score
+
+        rv = estimate_rv_from_volume_score(float(components.get("volume") or 0))
+    vol_done = bool(checklist.get("volume")) or rv >= 2.0
+    vol_label = f"Volume Spike RV×{rv:.2f} (нужно ≥2.0)" if rv > 0 else "Volume Spike ≥2× avg"
+    oi_score = float((components or {}).get("oi") or 0)
+    oi_label = f"OI pressure ({oi_score:.0f}/100)" if oi_score else "OI +5–10%"
+    of_score = float((components or {}).get("orderflow") or 0)
+    of_done = bool(checklist.get("orderflow")) or of_score >= 50
     return [
-        {"key": "volume", "label": "Volume Spike >2x", "done": bool(checklist.get("volume"))},
-        {"key": "oi", "label": "OI +5-10%", "done": bool(checklist.get("oi"))},
-        {"key": "entry_zone", "label": zone_label, "done": near_ideal or timing == "Optimal"},
-        {
-            "key": "orderflow",
-            "label": flow,
-            "done": bool(checklist.get("volume")) and bool(checklist.get("oi")),
-        },
+        {"key": "volume", "label": vol_label, "done": vol_done},
+        {"key": "oi", "label": oi_label, "done": bool(checklist.get("oi")) or oi_score >= 50},
+        {"key": "entry_zone", "label": zone_label, "done": bool(near_ideal)},
+        {"key": "orderflow", "label": flow, "done": of_done},
         {"key": "timing", "label": f"Timing: {timing}", "done": timing == "Optimal"},
     ]
 
@@ -650,8 +659,11 @@ def build_ai_conclusion(
     execution_score: int,
     timing: str,
     phase: str,
+    relative_volume: Optional[float] = None,
 ) -> str:
     side = "бычья" if direction == "LONG" else "медвежья"
+    rv = float(relative_volume or 0)
+    rv_note = f" (сейчас RV×{rv:.2f})" if rv > 0 else ""
     if status == "ENTRY_READY":
         return f"{side.capitalize()} структура подтверждена. Timing {timing}. Можно искать вход."
     if status == "INVALIDATED":
@@ -660,9 +672,9 @@ def build_ai_conclusion(
         return "Структура недостаточна для торгового сценария."
     if timing == "Optimal" and execution_score < 70:
         return (
-            "Цена находится в хорошей зоне входа, однако отсутствует подтверждение "
-            f"со стороны объёма и Order Flow (Execution {execution_score}). "
-            "Ждём Volume Spike / Delta, а не новую точку по времени."
+            "Неэффективность (Sweep/FVG/OB) есть, цена в зоне, но вход ещё рано: "
+            f"нет подтверждения объёмом/потоком{rv_note}, Execution {execution_score}. "
+            "Ждём RV≥2× и delta в сторону сценария — не новую точку по времени."
         )
     if phase == "Markdown" and direction == "SHORT" and timing == "Late":
         return (
@@ -773,6 +785,8 @@ def build_why_no_entry(
     else:
         bullets.append("Цена у Ideal Entry, но Execution ещё слабый")
         bullets.append("Ждём Volume / OI / Order Flow")
+        if distance_pct is not None and abs(float(distance_pct)) < 0.35:
+            bullets.append("Не путать mid-band 24h volume с Volume Spike на reclaim")
 
     return {"title": "Почему сейчас нет входа", "bullets": bullets}
 
@@ -821,21 +835,36 @@ def compute_probabilities(
     timing: str,
     near_ideal: bool,
     scenario_risk: int,
+    edge_score: Optional[int] = None,
+    relative_volume: Optional[float] = None,
 ) -> dict[str, int]:
     """Scenario = идея ещё жива; Entry Now = можно ли входить прямо сейчас."""
-    scenario = setup_score * 0.72 + (100 - scenario_risk) * 0.18 + execution_score * 0.10
+    edge = float(edge_score if edge_score is not None else setup_score)
+    scenario = (
+        setup_score * 0.50
+        + edge * 0.22
+        + (100 - scenario_risk) * 0.16
+        + execution_score * 0.12
+    )
     if timing == "Late":
         scenario -= 6
     scenario = int(max(8, min(92, round(scenario))))
 
-    entry_now = execution_score * 0.55 + (70 if near_ideal else 25) * 0.25
+    rv = float(relative_volume or 0)
+    entry_now = execution_score * 0.50 + (72 if near_ideal else 18) * 0.22
     if timing == "Optimal":
-        entry_now += 12
+        entry_now += 8
     elif timing == "Early":
-        entry_now += 4
+        entry_now += 3
     else:
-        entry_now -= 18
-    entry_now = entry_now * (setup_score / 100)
+        entry_now -= 16
+    if rv >= 2.5:
+        entry_now += 10
+    elif rv >= 2.0:
+        entry_now += 6
+    elif rv > 0 and rv < 1.2:
+        entry_now -= 8
+    entry_now = entry_now * (0.55 + setup_score / 220)
     entry_now = int(max(3, min(95, round(entry_now))))
     return {
         "scenario_probability": scenario,
@@ -1148,97 +1177,128 @@ def compute_edge_score(
     similar_winrate: Optional[float] = None,
     setup_score: int,
     timing: str,
+    profile: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Why this coin deserves attention among hundreds — inefficiency / SMC edge."""
+    """Edge = rarity of mispricing among the universe — NOT a binary SMC badge.
+
+    Continuous grades so cards differentiate (no more everyone = 95).
+    """
+    from app.engines.inefficiency.profile import compute_inefficiency_profile
+
     reasons: list[str] = []
-    score = 35.0
+    prof = profile or compute_inefficiency_profile(
+        direction=direction,
+        components=components,
+        checklist=checklist,
+        pd=pd,
+        volume_24h=volume_24h,
+        liquidity_quality=liquidity_quality,
+    )
 
-    liq = liquidity_quality if liquidity_quality is not None else 50
-    # Prefer thin / mid liquidity for inefficiency hunting
-    if volume_24h is not None and volume_24h < 5_000_000:
-        score += 14
-        reasons.append("Неликвидная монета")
-    elif liq < 45:
-        score += 12
-        reasons.append("Неликвидная монета")
-    elif liq < 60:
-        score += 6
-        reasons.append("Средняя ликвидность — есть неэффективность")
+    # Base from graded profile (already mixes thinness/structure/displacement)
+    score = 18.0 + float(prof.get("inefficiency_strength") or 0) * 0.42
+    reasons.append(str(prof.get("inefficiency_type_ru") or "Неэффективность"))
 
-    oi = float(components.get("oi") or 0)
-    if oi >= 55:
-        score += 10
-        reasons.append("OI выше среднего")
-    elif oi >= 40:
+    thin = float(prof.get("thinness") or 0)
+    if thin >= 80:
+        score += 8
+        reasons.append(f"Очень тонкий рынок (24h {_vol_label(volume_24h)})")
+    elif thin >= 65:
         score += 5
+        reasons.append(f"Тонкий mid-cap ({_vol_label(volume_24h)})")
+    elif thin < 40:
+        score -= 10
+        reasons.append("Слишком ликвидный для inefficiency-edge")
 
-    if checklist.get("liquidity_sweep") or float(components.get("liquidity_sweep") or 0) >= 55:
-        score += 12
-        reasons.append("Sweep")
-    if checklist.get("order_block") or float(components.get("order_block") or 0) >= 55:
-        score += 8
-        reasons.append("Order Block")
-    if checklist.get("fvg") or float(components.get("fvg") or 0) >= 55:
-        score += 8
-        reasons.append("FVG")
-    if checklist.get("bos") or float(components.get("bos") or 0) >= 55:
-        score += 3
-        reasons.append("BOS (confirm)")
+    sweep = float(components.get("liquidity_sweep") or 0)
+    fvg = float(components.get("fvg") or 0)
+    ob = float(components.get("order_block") or 0)
+    # Graded structure — strength matters, not just True/False
+    if sweep >= 50:
+        score += (sweep - 50) / 50 * 12
+        reasons.append(f"Sweep {sweep:.0f}")
+    if fvg >= 50:
+        score += (fvg - 50) / 50 * 9
+        reasons.append(f"FVG {fvg:.0f}")
+    if ob >= 50:
+        score += (ob - 50) / 50 * 9
+        reasons.append(f"OB {ob:.0f}")
+    if float(components.get("bos") or 0) >= 55:
+        score += 2
+        reasons.append("BOS confirm")
 
-    zone = (pd or {}).get("zone")
-    if direction == "LONG" and zone == "discount":
-        score += 10
-        reasons.append("Discount")
-    elif direction == "SHORT" and zone == "premium":
-        score += 10
-        reasons.append("Premium")
-    elif direction == "LONG" and zone == "premium":
+    disp = float(prof.get("displacement_pct") or components.get("impulse_pct") or 0)
+    if disp >= 10:
+        score += 9
+        reasons.append(f"Смещение {disp:.1f}%")
+    elif disp >= 5:
+        score += 5
+        reasons.append(f"Смещение {disp:.1f}%")
+    elif disp > 0:
+        score += 1
+
+    rv = float(prof.get("relative_volume") or 0)
+    if rv >= 3.0:
+        score += 8
+        reasons.append(f"RV×{rv:.2f} на событии")
+    elif rv >= 2.0:
+        score += 5
+        reasons.append(f"RV×{rv:.2f}")
+    elif 0 < rv < 1.15:
+        score -= 7
+        reasons.append(f"Слабый объём RV×{rv:.2f}")
+
+    if prof.get("zone_aligned"):
+        score += 6
+        reasons.append("Discount" if direction == "LONG" else "Premium")
+    elif (pd or {}).get("zone") == "premium" and direction == "LONG":
         score -= 8
-    elif direction == "SHORT" and zone == "discount":
+    elif (pd or {}).get("zone") == "discount" and direction == "SHORT":
         score -= 6
 
     if risk_reward is not None and float(risk_reward) >= 2.5:
-        score += 10
-        reasons.append(f"RR >{float(risk_reward):.1f}" if float(risk_reward) < 3 else "RR >2.5")
-    elif risk_reward is not None and float(risk_reward) >= 2.0:
         score += 5
-        reasons.append("RR ≥2")
+        reasons.append(f"RR {float(risk_reward):.1f}")
+    elif risk_reward is not None and float(risk_reward) >= 2.0:
+        score += 2
 
-    wr = similar_winrate
-    if wr is not None:
-        if wr >= 60:
-            score += 8
-            reasons.append(f"Журнальный WinRate {wr:.0f}%")
-    else:
-        # Proxy until trade journal exists — do NOT claim historical winrate
-        proxy = min(78.0, max(42.0, 40 + setup_score * 0.4))
-        if proxy >= 60:
-            score += 4
-            reasons.append(f"Оценка по качеству сетапа ~{proxy:.0f}%")
+    if similar_winrate is not None and similar_winrate >= 60:
+        score += 6
+        reasons.append(f"Журнальный WR {similar_winrate:.0f}%")
 
-    if timing == "Optimal":
-        score += 4
-    elif timing == "Late":
-        score -= 10
+    if timing == "Late":
+        score -= 8
+    elif timing == "Optimal":
+        score += 2
 
-    score_i = int(max(5, min(95, round(score))))
-    # Keep unique reasons, max 7
+    # Soft ceiling: only elite profiles approach 90+
+    score_i = int(max(5, min(93, round(score))))
+    if score_i >= 88 and rv < 2.0:
+        score_i = min(score_i, 84)  # no elite edge without volume on event
+
     uniq: list[str] = []
     for r in reasons:
-        if r not in uniq:
+        if r and r not in uniq:
             uniq.append(r)
     return {
         "edge_score": score_i,
         "edge_stars": score_to_stars(score_i),
         "edge_reasons": [f"+ {r}" for r in uniq[:7]],
         "edge_hint": (
-            "Сильный edge среди рынка"
-            if score_i >= 75
-            else "Умеренный edge"
-            if score_i >= 55
-            else "Слабый edge — смотри другие идеи"
+            "Редкая неэффективность — приоритет в фиде"
+            if score_i >= 78
+            else "Рабочий edge — ждём подтверждение объёмом"
+            if score_i >= 62
+            else "Слабый edge — скорее шаблон, чем преимущество"
         ),
+        "inefficiency": prof,
     }
+
+
+def _vol_label(volume_24h: Optional[float]) -> str:
+    if volume_24h is None:
+        return "n/a"
+    return f"{float(volume_24h)/1e6:.2f}M"
 
 
 def build_replay_seed(status: LifecycleStatus, *, at: Optional[datetime] = None) -> list[dict[str, Any]]:
@@ -1583,9 +1643,31 @@ def build_readiness_payload(
         timing=timing,
     )
     meta = STATUS_META[status]
+    from app.engines.inefficiency.profile import (
+        compute_inefficiency_profile,
+        estimate_rv_from_volume_score,
+    )
+
+    rv_now = float(components.get("relative_volume") or components.get("rv") or 0)
+    if rv_now <= 0:
+        rv_now = estimate_rv_from_volume_score(float(components.get("volume") or 0))
+
+    # Enrich confirmed with concrete RV when volume present
     confirmed = build_confirmed_short(checklist, direction)
+    if checklist.get("volume") or rv_now >= 2.0:
+        confirmed = [c for c in confirmed if c != "Volume Spike"]
+        confirmed.insert(0, f"Volume Spike RV×{rv_now:.2f}")
+    elif float(components.get("volume") or 0) > 0:
+        # Explicit: mid volume is NOT a confirm for entry
+        pass
+
     waiting = build_waiting_for(
-        checklist, direction=direction, near_ideal=near_ideal, timing=timing
+        checklist,
+        direction=direction,
+        near_ideal=near_ideal,
+        timing=timing,
+        relative_volume=rv_now,
+        components=components,
     )
     zone_note = zone_explanation(direction, pd)
 
@@ -1617,6 +1699,7 @@ def build_readiness_payload(
         execution_score=execution_score,
         timing=timing,
         phase=phase["phase"],
+        relative_volume=rv_now,
     )
     ai_verdict = build_ai_verdict(
         status=status,
@@ -1625,13 +1708,6 @@ def build_readiness_payload(
         execution_score=execution_score,
     )
     lights = traffic_lights(setup_score, execution_score, breakdown, timing, risk_pct)
-    probs = compute_probabilities(
-        setup_score=setup_score,
-        execution_score=execution_score,
-        timing=timing,
-        near_ideal=near_ideal,
-        scenario_risk=risk_pct,
-    )
     why = build_why_no_entry(
         status=status,
         direction=direction,
@@ -1699,6 +1775,14 @@ def build_readiness_payload(
         pd=pd,
     )
 
+    ineff_profile = compute_inefficiency_profile(
+        direction=direction,
+        components=components,
+        checklist=checklist,
+        pd=pd,
+        volume_24h=volume_24h,
+        liquidity_quality=liq.get("liquidity_quality"),
+    )
     edge = compute_edge_score(
         direction=direction,
         components=components,
@@ -1709,6 +1793,16 @@ def build_readiness_payload(
         volume_24h=volume_24h,
         setup_score=setup_score,
         timing=timing,
+        profile=ineff_profile,
+    )
+    probs = compute_probabilities(
+        setup_score=setup_score,
+        execution_score=execution_score,
+        timing=timing,
+        near_ideal=near_ideal,
+        scenario_risk=risk_pct,
+        edge_score=edge.get("edge_score"),
+        relative_volume=rv_now,
     )
     replay = merge_replay(previous, status=status, at=now)
 
@@ -1778,6 +1872,13 @@ def build_readiness_payload(
         "edge_stars": edge["edge_stars"],
         "edge_reasons": edge["edge_reasons"],
         "edge_hint": edge["edge_hint"],
+        "inefficiency_type": ineff_profile.get("inefficiency_type"),
+        "inefficiency_type_ru": ineff_profile.get("inefficiency_type_ru"),
+        "inefficiency_strength": ineff_profile.get("inefficiency_strength"),
+        "inefficiency_thesis": ineff_profile.get("thesis"),
+        "relative_volume": ineff_profile.get("relative_volume"),
+        "displacement_pct": ineff_profile.get("displacement_pct"),
+        "entry_blockers": ineff_profile.get("entry_blockers") or [],
         "replay": replay,
         "risk_label": "Высокий" if risk_pct >= 60 else "Средний" if risk_pct >= 35 else "Низкий",
         "scenario_risk_pct": risk_pct,

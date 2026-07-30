@@ -76,6 +76,13 @@ class SignalOut(BaseModel):
     edge_reasons: list[str] = Field(default_factory=list)
     edge_hint: Optional[str] = None
     feed: Optional[str] = None  # inefficiency | volume_scan
+    inefficiency_type: Optional[str] = None
+    inefficiency_type_ru: Optional[str] = None
+    inefficiency_strength: Optional[int] = None
+    inefficiency_thesis: Optional[str] = None
+    relative_volume: Optional[float] = None
+    displacement_pct: Optional[float] = None
+    entry_blockers: list[str] = Field(default_factory=list)
     replay: list[dict[str, Any]] = Field(default_factory=list)
     score_history: list[dict[str, Any]] = Field(default_factory=list)
     status_reason: Optional[str] = None
