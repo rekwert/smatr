@@ -80,6 +80,10 @@ class SignalOut(BaseModel):
     inefficiency_type_ru: Optional[str] = None
     inefficiency_strength: Optional[int] = None
     inefficiency_thesis: Optional[str] = None
+    inefficiency_status: Optional[str] = None
+    inefficiency_status_ru: Optional[str] = None
+    inefficiency_qualifies: Optional[bool] = None
+    inefficiency_playbook: list[dict[str, Any]] = Field(default_factory=list)
     relative_volume: Optional[float] = None
     displacement_pct: Optional[float] = None
     entry_blockers: list[str] = Field(default_factory=list)

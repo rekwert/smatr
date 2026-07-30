@@ -96,13 +96,36 @@ def feed_of(row: dict[str, Any]) -> str:
     return str(row.get("feed") or reason.get("feed") or FEED_VOLUME_SCAN)
 
 
+def inefficiency_event_ok(row: dict[str, Any]) -> bool:
+    """Accept flash OR classic Sweep+FVG+OB with real displacement."""
+    reason = row.get("reason") if isinstance(row.get("reason"), dict) else {}
+    if row.get("inefficiency_qualifies") is True or reason.get("inefficiency_qualifies") is True:
+        return True
+    kind = row.get("inefficiency_type") or reason.get("inefficiency_type")
+    if kind == "flash_spike":
+        return True
+    checklist, components = extract_structure(row)
+    if not structure_confirmed(checklist=checklist, components=components):
+        return False
+    # Require measurable displacement so feed is not SMC noise
+    disp = 0.0
+    for src in (row, reason, components):
+        if isinstance(src, dict) and src.get("displacement_pct") is not None:
+            try:
+                disp = float(src.get("displacement_pct") or 0)
+                break
+            except (TypeError, ValueError):
+                pass
+    impulse = _comp(components, "impulse_pct")
+    return max(disp, impulse) >= 2.0 or _comp(components, "liquidity_sweep") >= 70
+
+
 def qualifies_inefficiency(row: dict[str, Any]) -> bool:
     """Main product gate for dashboard / default signals list."""
     if feed_of(row) == FEED_VOLUME_SCAN:
         return False
     symbol = str(row.get("symbol") or "")
-    checklist, components = extract_structure(row)
-    if not structure_confirmed(checklist=checklist, components=components):
+    if not inefficiency_event_ok(row):
         return False
     setup = _pick_int(row, "setup_score", "score", default=0)
     execution = _pick_int(row, "execution_score", default=0)
@@ -165,10 +188,27 @@ def annotate_feed(analysis_or_row: dict[str, Any], feed: str) -> dict[str, Any]:
 
 def should_persist_inefficiency(analysis: dict[str, Any]) -> tuple[bool, str]:
     """Gate before writing to main inefficiency memory/DB."""
+    if analysis.get("inefficiency_qualifies") is True:
+        setup = int(analysis.get("setup_score") or analysis.get("score") or 0)
+        execution = int(analysis.get("execution_score") or 0)
+        edge = int(analysis.get("edge_score") or 0)
+        symbol = str(analysis.get("symbol") or "")
+        if setup < MIN_SETUP:
+            return False, f"setup<{MIN_SETUP}"
+        if execution < MIN_EXECUTION:
+            return False, f"exec<{MIN_EXECUTION}"
+        need = edge_threshold(symbol)
+        if edge < need:
+            return False, f"edge<{need}"
+        return True, "ok"
+
     checklist = (analysis.get("reasons") or {}).get("checklist") or analysis.get("checklist") or {}
     components = analysis.get("components") or {}
     if not structure_confirmed(checklist=checklist, components=components):
-        return False, "need Sweep+FVG+OB"
+        return False, "need Sweep+FVG+OB or flash"
+    disp = float(analysis.get("displacement_pct") or components.get("impulse_pct") or 0)
+    if disp < 2.0 and float(components.get("liquidity_sweep") or 0) < 70:
+        return False, "weak displacement"
     setup = int(analysis.get("setup_score") or analysis.get("score") or 0)
     execution = int(analysis.get("execution_score") or 0)
     edge = int(analysis.get("edge_score") or 0)

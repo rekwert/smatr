@@ -61,8 +61,8 @@ export default function DashboardPage() {
             Лучшие возможности
           </motion.h1>
           <p className="mt-3 max-w-2xl text-mist">
-            Неэффективности рынка · Sweep + FVG + Order Block · сортировка Edge → Execution → Setup.
-            Мажоры только при редком сильном Edge. Не общий SMC-сканер топ-объёма.
+            Инструмент неэффективностей: Flash spike / Sweep→FVG→OB · playbook Detect→Zone→RV→Enter.
+            Вход только при RV≥2× в зоне. Не общий SMC-сканер.
           </p>
         </div>
         <button

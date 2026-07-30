@@ -24,8 +24,12 @@ def _row(**kwargs):
         "edge_score": 75,
         "score": 70,
         "signal_type": "smc",
+        "displacement_pct": 4.5,
+        "inefficiency_qualifies": True,
         "reason": {
             "feed": FEED_INEFFICIENCY,
+            "displacement_pct": 4.5,
+            "inefficiency_qualifies": True,
             "checklist": {
                 "liquidity_sweep": True,
                 "fvg": True,
@@ -35,6 +39,7 @@ def _row(**kwargs):
                 "liquidity_sweep": 80,
                 "fvg": 70,
                 "order_block": 65,
+                "impulse_pct": 4.5,
             },
         },
     }
@@ -98,6 +103,8 @@ def test_should_persist_gate():
             "setup_score": 60,
             "execution_score": 35,
             "edge_score": 72,
+            "displacement_pct": 4.0,
+            "inefficiency_qualifies": True,
             "reasons": {
                 "checklist": {
                     "liquidity_sweep": True,
@@ -105,7 +112,7 @@ def test_should_persist_gate():
                     "order_block": True,
                 }
             },
-            "components": {},
+            "components": {"impulse_pct": 4.0, "liquidity_sweep": 80},
         }
     )
     assert ok
@@ -115,6 +122,7 @@ def test_should_persist_gate():
             "setup_score": 80,
             "execution_score": 50,
             "edge_score": 70,
+            "displacement_pct": 5.0,
             "reasons": {
                 "checklist": {
                     "liquidity_sweep": True,
@@ -122,6 +130,7 @@ def test_should_persist_gate():
                     "order_block": True,
                 }
             },
+            "components": {"impulse_pct": 5.0, "liquidity_sweep": 80},
         }
     )
     assert not bad

@@ -116,11 +116,6 @@ class ScoreCalculator:
             risk_reward=levels.get("risk_reward"),
             volume_24h=volume_24h,
         )
-        # Public score = Setup Score (качество идеи), не смешанный legacy.
-        score = int(readiness["setup_score"])
-        tier = self.classify(score)
-        reasons_found = list(readiness["confirmed"])
-        reasons_missing = list(readiness["missing_items"])
         # Prefer Ideal Entry plan (Stop/TP already normalized in readiness)
         if readiness.get("ideal_entry") is not None:
             levels = {
@@ -133,6 +128,102 @@ class ScoreCalculator:
                 "risk_reward": readiness.get("risk_reward") or levels.get("risk_reward"),
                 "risk_pct": readiness.get("risk_pct") or levels.get("risk_pct"),
             }
+
+        from app.engines.inefficiency.engine import (
+            INEFF_ENTRY_READY,
+            INEFF_INVALIDATED,
+            evaluate_inefficiency,
+        )
+
+        ineff = evaluate_inefficiency(
+            candles,
+            direction=direction,
+            components=components,
+            checklist=checklist,
+            pd=pd,
+            volume_24h=volume_24h,
+            vol=vol,
+            levels=levels,
+        )
+        # Flash path may set preferred fade direction
+        if ineff.get("qualifies") and ineff.get("direction") in ("LONG", "SHORT"):
+            direction = str(ineff["direction"])
+        if ineff.get("qualifies") and ineff.get("plan"):
+            p = ineff["plan"]
+            levels = {
+                **levels,
+                "entry": p.get("entry") or levels.get("entry"),
+                "ideal_entry": p.get("entry") or levels.get("ideal_entry"),
+                "ideal_entry_low": p.get("entry_low"),
+                "ideal_entry_high": p.get("entry_high"),
+                "stop": p.get("stop") or levels.get("stop"),
+                "tp1": p.get("tp1") or levels.get("tp1"),
+                "tp2": p.get("tp2") or levels.get("tp2"),
+                "risk_reward": p.get("risk_reward") or levels.get("risk_reward"),
+            }
+            readiness["ideal_entry"] = levels.get("ideal_entry")
+            readiness["ideal_entry_low"] = levels.get("ideal_entry_low")
+            readiness["ideal_entry_high"] = levels.get("ideal_entry_high")
+            readiness["stop"] = levels.get("stop")
+            readiness["tp1"] = levels.get("tp1")
+            readiness["tp2"] = levels.get("tp2")
+            readiness["entry"] = levels.get("entry")
+            readiness["risk_reward"] = levels.get("risk_reward")
+
+        # Map inefficiency lifecycle onto card status when we have a real event
+        if ineff.get("qualifies"):
+            st = ineff.get("inefficiency_status")
+            if st == INEFF_ENTRY_READY:
+                readiness["lifecycle_status"] = "ENTRY_READY"
+                readiness["lifecycle_emoji"] = "🟢"
+                readiness["lifecycle_ru"] = "Вход по неэффективности"
+            elif st == INEFF_INVALIDATED:
+                readiness["lifecycle_status"] = "INVALIDATED"
+                readiness["lifecycle_emoji"] = "🔴"
+                readiness["lifecycle_ru"] = "Событие сломано"
+            else:
+                readiness["lifecycle_status"] = "WATCH"
+                readiness["lifecycle_emoji"] = "🟡"
+                readiness["lifecycle_ru"] = ineff.get("inefficiency_status_ru") or "Наблюдение"
+            if ineff.get("action"):
+                readiness["action"] = ineff["action"]
+            if ineff.get("playbook"):
+                readiness["waiting_for"] = [
+                    {
+                        "key": s.get("key"),
+                        "label": s.get("label"),
+                        "done": bool(s.get("done")),
+                    }
+                    for s in ineff["playbook"]
+                ]
+                readiness["next_steps"] = [
+                    s["label"] for s in ineff["playbook"] if not s.get("done") and s.get("required")
+                ]
+            # Blend Edge toward true inefficiency strength
+            strength = int(ineff.get("inefficiency_strength") or 0)
+            prev_edge = int(readiness.get("edge_score") or 0)
+            blended = int(round(prev_edge * 0.35 + strength * 0.65))
+            readiness["edge_score"] = max(5, min(93, blended))
+            readiness["inefficiency_type"] = ineff.get("inefficiency_type")
+            readiness["inefficiency_type_ru"] = ineff.get("inefficiency_type_ru")
+            readiness["inefficiency_strength"] = strength
+            readiness["inefficiency_thesis"] = ineff.get("thesis")
+            readiness["relative_volume"] = ineff.get("relative_volume")
+            readiness["displacement_pct"] = ineff.get("displacement_pct")
+            readiness["entry_blockers"] = ineff.get("entry_blockers") or []
+            readiness["ai_conclusion"] = (
+                f"{ineff.get('inefficiency_type_ru')}. {ineff.get('hint') or ineff.get('thesis')}"
+            )
+            readiness["ai_verdict"] = (
+                f"{ineff.get('action', {}).get('emoji', '🟡')} "
+                f"{ineff.get('inefficiency_status_ru')}"
+            )
+
+        # Public score = Setup Score (качество идеи), не смешанный legacy.
+        score = int(readiness["setup_score"])
+        tier = self.classify(score)
+        reasons_found = list(readiness["confirmed"])
+        reasons_missing = list(readiness["missing_items"])
 
         confidence = "high" if score >= SCORE_TIER_STRONG else "medium" if score >= SCORE_TIER_MEDIUM else "low"
 
@@ -163,9 +254,9 @@ class ScoreCalculator:
             "traffic_lights": readiness.get("traffic_lights"),
             "execution_breakdown": readiness.get("execution_breakdown"),
             "pd_zone": readiness.get("pd_zone"),
-            "ideal_entry": readiness.get("ideal_entry"),
-            "ideal_entry_low": readiness.get("ideal_entry_low"),
-            "ideal_entry_high": readiness.get("ideal_entry_high"),
+            "ideal_entry": readiness.get("ideal_entry") or levels.get("ideal_entry"),
+            "ideal_entry_low": readiness.get("ideal_entry_low") or levels.get("ideal_entry_low"),
+            "ideal_entry_high": readiness.get("ideal_entry_high") or levels.get("ideal_entry_high"),
             "alternative_entry_low": readiness.get("alternative_entry_low"),
             "alternative_entry_high": readiness.get("alternative_entry_high"),
             "progress": readiness["progress"],
@@ -198,13 +289,18 @@ class ScoreCalculator:
             "edge_stars": readiness.get("edge_stars"),
             "edge_reasons": readiness.get("edge_reasons") or [],
             "edge_hint": readiness.get("edge_hint"),
-            "inefficiency_type": readiness.get("inefficiency_type"),
-            "inefficiency_type_ru": readiness.get("inefficiency_type_ru"),
-            "inefficiency_strength": readiness.get("inefficiency_strength"),
-            "inefficiency_thesis": readiness.get("inefficiency_thesis"),
-            "relative_volume": readiness.get("relative_volume"),
-            "displacement_pct": readiness.get("displacement_pct"),
-            "entry_blockers": readiness.get("entry_blockers") or [],
+            "inefficiency_type": readiness.get("inefficiency_type") or ineff.get("inefficiency_type"),
+            "inefficiency_type_ru": readiness.get("inefficiency_type_ru") or ineff.get("inefficiency_type_ru"),
+            "inefficiency_strength": readiness.get("inefficiency_strength") or ineff.get("inefficiency_strength"),
+            "inefficiency_thesis": readiness.get("inefficiency_thesis") or ineff.get("thesis"),
+            "inefficiency_status": ineff.get("inefficiency_status"),
+            "inefficiency_status_ru": ineff.get("inefficiency_status_ru"),
+            "inefficiency_qualifies": bool(ineff.get("qualifies")),
+            "inefficiency_playbook": ineff.get("playbook") or [],
+            "inefficiency_plan": ineff.get("plan") or {},
+            "relative_volume": readiness.get("relative_volume") if readiness.get("relative_volume") is not None else ineff.get("relative_volume"),
+            "displacement_pct": readiness.get("displacement_pct") if readiness.get("displacement_pct") is not None else ineff.get("displacement_pct"),
+            "entry_blockers": readiness.get("entry_blockers") or ineff.get("entry_blockers") or [],
             "replay": readiness.get("replay") or [],
             "score_history": readiness.get("score_history") or [],
             "status_reason": readiness.get("status_reason"),
@@ -228,6 +324,8 @@ class ScoreCalculator:
                 "checklist": checklist,
                 "confirmed": readiness["confirmed"],
                 "missing_items": readiness["missing_items"],
+                "inefficiency_status": ineff.get("inefficiency_status"),
+                "inefficiency_qualifies": bool(ineff.get("qualifies")),
             },
             "levels": levels,
             "zones": zones,
@@ -241,6 +339,11 @@ class ScoreCalculator:
             },
             "sequence_valid": sequence_valid,
             "readiness": readiness,
+            "stop": levels.get("stop") or readiness.get("stop"),
+            "tp1": levels.get("tp1") or readiness.get("tp1"),
+            "tp2": levels.get("tp2") or readiness.get("tp2"),
+            "entry": levels.get("entry") or readiness.get("entry"),
+            "risk_reward": levels.get("risk_reward") or readiness.get("risk_reward"),
         }
 
     def classify(self, score: int) -> str:

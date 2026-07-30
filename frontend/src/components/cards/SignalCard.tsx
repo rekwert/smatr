@@ -286,6 +286,11 @@ export function SignalCard({
                   <span className="text-mist font-normal"> · сила {signal.inefficiency_strength}</span>
                 ) : null}
               </div>
+              {signal.inefficiency_status_ru && (
+                <p className="text-[11px] text-amber-100/90">
+                  Статус: {signal.inefficiency_status_ru}
+                </p>
+              )}
               {signal.inefficiency_thesis && (
                 <p className="text-[10px] text-mist leading-snug">{signal.inefficiency_thesis}</p>
               )}
@@ -298,6 +303,16 @@ export function SignalCard({
                 )}
               </div>
             </div>
+          )}
+          {(signal.inefficiency_playbook || []).length > 0 && (
+            <ul className="space-y-1 border border-line/40 rounded-md px-2 py-1.5 bg-ink/20">
+              <li className="text-[10px] uppercase tracking-wide text-mist">Playbook</li>
+              {(signal.inefficiency_playbook || []).map((step) => (
+                <li key={String(step.key || step.label)} className="text-[11px] text-slate-200">
+                  {step.done ? "✅" : "□"} {String(step.label || "")}
+                </li>
+              ))}
+            </ul>
           )}
           <ul className="space-y-0.5">
             {(signal.edge_reasons || []).slice(0, 7).map((r) => (

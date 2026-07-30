@@ -152,6 +152,10 @@ export type Signal = {
   inefficiency_type_ru?: string | null;
   inefficiency_strength?: number | null;
   inefficiency_thesis?: string | null;
+  inefficiency_status?: string | null;
+  inefficiency_status_ru?: string | null;
+  inefficiency_qualifies?: boolean | null;
+  inefficiency_playbook?: { key?: string; label?: string; done?: boolean; required?: boolean }[];
   relative_volume?: number | null;
   displacement_pct?: number | null;
   entry_blockers?: string[];
